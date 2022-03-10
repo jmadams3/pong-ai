@@ -1,197 +1,166 @@
+from pong import Game
 import pygame
-pygame.init()
-
-WIDTH, HEIGHT = 700, 500
-WINDOW = pygame.display.set_mode((WIDTH, HEIGHT))
-pygame.display.set_caption("Pong")
-
-FPS = 70
-
-WHITE = (255, 255, 255)
-BLACK = (0, 0, 0)
-RED = (204, 0, 0)
-BLUE = (75, 156, 211)
-GRAY = (105, 105, 105)
-
-BALL_RADIUS = 7
-
-SCORE_FONT = pygame.font.SysFont("comicsans", 50)
-
-PADDLE_WIDTH, PADDLE_HEIGHT = 20, 100
-
-WINNING_SCORE = 5
-
-class Paddle:
-    COLOR_LEFT = BLUE
-    COLOR_RIGHT = RED
-    VELOCITY = 5
-
-    def __init__(self, x, y, width, height, color):
-        self.x = self.original_x = x
-        self.y = self.original_y = y
-        self.width = width
-        self.height = height
-        self.color = color
-
-    def draw(self, window):
-        pygame.draw.rect(window, self.color, (self.x, self.y, self.width, self.height))
-
-    def move(self, up=True):
-        if up:
-            self.y -= self.VELOCITY
-        else:
-            self.y += self.VELOCITY
-
-    def reset(self):
-        self.x = self.original_x
-        self.y = self.original_y
-
-class Ball:
-
-    MAX_VEL = 7
-    COLOR = WHITE
-
-    def __init__(self, x, y, radius):
-        self.x = self.original_x = x
-        self.y = self.original_y = y
-        self.radius = radius
-        self.x_vel = self.MAX_VEL
-        self.y_vel = 0
-
-    def draw(self, window):
-        pygame.draw.circle(window, self.COLOR, (self.x, self.y), self.radius)
-
-    def move(self):
-        self.x += self.x_vel
-        self.y += self.y_vel
-
-    def reset(self):
-        self.x = self.original_x
-        self.y = self.original_y
-        self.y_vel = 0
-        self.x_vel *= -1
-
-def draw(window, paddles, ball, left_score, right_score):
-    window.fill(BLACK)
-
-    left_score_text = SCORE_FONT.render(f"{left_score}", 1, WHITE)
-    right_score_text = SCORE_FONT.render(f"{right_score}", 1, WHITE)
-    window.blit(left_score_text, (WIDTH // 4 - left_score_text.get_width() // 2, 20))
-    window.blit(right_score_text, (WIDTH * (3/4) - right_score_text.get_width() // 2, 20))
+import neat
+import os
+import time
+import pickle
 
 
+class PongGame:
+    def __init__(self, window, width, height):
+        self.game = Game(window, width, height)
+        self.ball = self.game.ball
+        self.left_paddle = self.game.left_paddle
+        self.right_paddle = self.game.right_paddle
 
-    for paddle in paddles:
-        paddle.draw(window)
+    def test_ai(self, net):
+        """
+        Test the AI against a human player by passing a NEAT neural network
+        """
+        clock = pygame.time.Clock()
+        run = True
+        while run:
+            clock.tick(60)
+            game_info = self.game.loop()
 
-    for i in range(10, HEIGHT, HEIGHT//20):
-       if i % 2 == 1:
-          continue
-       pygame.draw.rect(window, GRAY, (WIDTH//2 - 5, i, 10, HEIGHT//17))
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    run = False
+                    break
 
-    ball.draw(window)
-    pygame.display.update()
+            output = net.activate((self.right_paddle.y, abs(
+                self.right_paddle.x - self.ball.x), self.ball.y))
+            decision = output.index(max(output))
 
-def handle_collision(ball, left_paddle, right_paddle):
-    if ball.y + ball.radius >= HEIGHT:
-        ball.y_vel *= -1
-    elif ball.y - ball.radius <= 0:
-        ball.y_vel *= -1
+            if decision == 1:  # AI moves up
+                self.game.move_paddle(left=False, up=True)
+            elif decision == 2:  # AI moves down
+                self.game.move_paddle(left=False, up=False)
 
-    if ball.x_vel < 0:
-        if ball.y >= left_paddle.y and ball.y <= left_paddle.y + left_paddle.height:
-            if ball.x - ball.radius <= left_paddle.x + left_paddle.width:
-                ball.x_vel *= -1
+            keys = pygame.key.get_pressed()
+            if keys[pygame.K_w]:
+                self.game.move_paddle(left=True, up=True)
+            elif keys[pygame.K_s]:
+                self.game.move_paddle(left=True, up=False)
 
-                middle_y = left_paddle.y + left_paddle.height / 2
-                difference_in_y = middle_y - ball.y
-                reduction_factor = (left_paddle.height / 2) / ball.MAX_VEL
-                y_vel = difference_in_y / reduction_factor
-                ball.y_vel = -1 * y_vel
+            self.game.draw(draw_score=True)
+            pygame.display.update()
 
-    else:
-        if ball.y >= right_paddle.y and ball.y <= right_paddle.y + right_paddle.height:
-            if ball.x + ball.radius >= right_paddle.x:
-                ball.x_vel *= -1
+    def train_ai(self, genome1, genome2, config, draw=False):
+        """
+        Train the AI by passing two NEAT neural networks and the NEAt config object.
+        These AI's will play against eachother to determine their fitness.
+        """
+        run = True
+        start_time = time.time()
 
-                middle_y = right_paddle.y + right_paddle.height / 2
-                difference_in_y = middle_y - ball.y
-                reduction_factor = (right_paddle.height / 2) / ball.MAX_VEL
-                y_vel = difference_in_y / reduction_factor
-                ball.y_vel = -1 * y_vel
+        net1 = neat.nn.FeedForwardNetwork.create(genome1, config)
+        net2 = neat.nn.FeedForwardNetwork.create(genome2, config)
+        self.genome1 = genome1
+        self.genome2 = genome2
 
+        max_hits = 50
 
+        while run:
+            for event in pygame.event.get():
+                if event.type == pygame.QUIT:
+                    return True
 
-def handle_paddle_movement(keys, left_paddle, right_paddle):
-    if keys[pygame.K_w] and left_paddle.y - left_paddle.VELOCITY >= 0:
-        left_paddle.move(up=True)
-    if keys[pygame.K_s] and left_paddle.y + left_paddle.VELOCITY + left_paddle.height <= HEIGHT:
-        left_paddle.move(up=False)
-    
-    if keys[pygame.K_UP] and right_paddle.y - right_paddle.VELOCITY >= 0:
-        right_paddle.move(up=True)
-    if keys[pygame.K_DOWN] and right_paddle.y + right_paddle.VELOCITY + right_paddle.height <= HEIGHT:
-        right_paddle.move(up=False)
+            game_info = self.game.loop()
 
-def main():
-    run = True
-    clock = pygame.time.Clock()
+            self.move_ai_paddles(net1, net2)
 
-    left_paddle = Paddle(10, HEIGHT//2 - PADDLE_HEIGHT//2, PADDLE_WIDTH, PADDLE_HEIGHT, BLUE)
-    right_paddle = Paddle(WIDTH - 10 - PADDLE_WIDTH, HEIGHT//2 - PADDLE_HEIGHT//2, PADDLE_WIDTH, PADDLE_HEIGHT, RED)
+            if draw:
+                self.game.draw(draw_score=False, draw_hits=True)
 
-    ball = Ball(WIDTH // 2, HEIGHT // 2, BALL_RADIUS)
+            pygame.display.update()
 
-    left_score = 0
-    right_score = 0
-
-    while run:
-        clock.tick(FPS)
-        draw(WINDOW, [left_paddle, right_paddle], ball, left_score, right_score)
-
-        for event in pygame.event.get():
-            if event.type == pygame.QUIT:
-                run = False
+            duration = time.time() - start_time
+            if game_info.left_score == 1 or game_info.right_score == 1 or game_info.left_hits >= max_hits:
+                self.calculate_fitness(game_info, duration)
                 break
 
-        keys = pygame.key.get_pressed()
-        handle_paddle_movement(keys, left_paddle, right_paddle)
+        return False
 
-        ball.move()
-        handle_collision(ball, left_paddle, right_paddle)
+    def move_ai_paddles(self, net1, net2):
+        """
+        Determine where to move the left and the right paddle based on the two 
+        neural networks that control them. 
+        """
+        players = [(self.genome1, net1, self.left_paddle, True), (self.genome2, net2, self.right_paddle, False)]
+        for (genome, net, paddle, left) in players:
+            output = net.activate(
+                (paddle.y, abs(paddle.x - self.ball.x), self.ball.y))
+            decision = output.index(max(output))
 
-        if ball.x < 0:
-            right_score += 1
-            ball.reset()
-        elif ball.x > WIDTH:
-            left_score += 1
-            ball.reset()
+            valid = True
+            if decision == 0:  # Don't move
+                genome.fitness -= 0.01  # we want to discourage this
+            elif decision == 1:  # Move up
+                valid = self.game.move_paddle(left=left, up=True)
+            else:  # Move down
+                valid = self.game.move_paddle(left=left, up=False)
 
-        won = False
-        if left_score >= WINNING_SCORE:
-            won = True
-            win_text = "Left Player Won!"
-            text = SCORE_FONT.render(win_text, 1, BLUE)
+            if not valid:  # If the movement makes the paddle go off the screen punish the AI
+                genome.fitness -= 1
 
-        elif right_score >= WINNING_SCORE:
-            won = True
-            win_text = "Right Player Won!"
-            text = SCORE_FONT.render(win_text, 1, RED)
+    def calculate_fitness(self, game_info, duration):
+        self.genome1.fitness += game_info.left_hits + duration
+        self.genome2.fitness += game_info.right_hits + duration
 
 
-        
-        if won:
-            #text = SCORE_FONT.render(win_text, 1, BLUE)
-            WINDOW.blit(text, (WIDTH // 2 - text.get_width() // 2, HEIGHT // 2 - text.get_height() // 2))
-            pygame.display.update()
-            pygame.time.delay(5000)
-            ball.reset()
-            left_paddle.reset()
-            right_paddle.reset()
-            left_score = 0
-            right_score = 0
+def eval_genomes(genomes, config):
+    """
+    Run each genome against eachother one time to determine the fitness.
+    """
+    width, height = 700, 500
+    win = pygame.display.set_mode((width, height))
+    pygame.display.set_caption("Pong")
 
-    pygame.quit()
+    for i, (genome_id1, genome1) in enumerate(genomes):
+        print(round(i/len(genomes) * 100), end=" ")
+        genome1.fitness = 0
+        for genome_id2, genome2 in genomes[min(i+1, len(genomes) - 1):]:
+            genome2.fitness = 0 if genome2.fitness == None else genome2.fitness
+            pong = PongGame(win, width, height)
+
+            force_quit = pong.train_ai(genome1, genome2, config, draw=True)
+            if force_quit:
+                quit()
+
+
+def run_neat(config):
+    #p = neat.Checkpointer.restore_checkpoint('neat-checkpoint-46')
+    p = neat.Population(config)
+    p.add_reporter(neat.StdOutReporter(True))
+    stats = neat.StatisticsReporter()
+    p.add_reporter(stats)
+    p.add_reporter(neat.Checkpointer(1))
+
+    winner = p.run(eval_genomes, 50)
+    with open("best.pickle", "wb") as f:
+        pickle.dump(winner, f)
+
+
+def test_best_network(config):
+    with open("best.pickle", "rb") as f:
+        winner = pickle.load(f)
+    winner_net = neat.nn.FeedForwardNetwork.create(winner, config)
+
+    width, height = 700, 500
+    win = pygame.display.set_mode((width, height))
+    pygame.display.set_caption("Pong")
+    pong = PongGame(win, width, height)
+    pong.test_ai(winner_net)
+
 
 if __name__ == '__main__':
-    main()
+    local_dir = os.path.dirname(__file__)
+    config_path = os.path.join(local_dir, 'config.txt')
+
+    config = neat.Config(neat.DefaultGenome, neat.DefaultReproduction,
+                         neat.DefaultSpeciesSet, neat.DefaultStagnation,
+                         config_path)
+
+    run_neat(config)
+    test_best_network(config)
