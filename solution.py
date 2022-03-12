@@ -71,7 +71,7 @@ class PongGame:
             self.move_ai_paddles(net1, net2)
 
             if draw:
-                self.game.draw(draw_score=False, draw_hits=True)
+                self.game.draw(draw_score=False, draw_hits=False)
 
             pygame.display.update()
 
@@ -130,8 +130,8 @@ def eval_genomes(genomes, config):
 
 
 def run_neat(config):
-    #p = neat.Checkpointer.restore_checkpoint('neat-checkpoint-46')
-    p = neat.Population(config)
+    p = neat.Checkpointer.restore_checkpoint('neat-checkpoint-14')
+    #p = neat.Population(config)
     p.add_reporter(neat.StdOutReporter(True))
     stats = neat.StatisticsReporter()
     p.add_reporter(stats)
@@ -162,5 +162,5 @@ if __name__ == '__main__':
                          neat.DefaultSpeciesSet, neat.DefaultStagnation,
                          config_path)
 
-    run_neat(config)
+   # run_neat(config)
     test_best_network(config)
